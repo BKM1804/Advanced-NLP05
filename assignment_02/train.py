@@ -344,14 +344,11 @@ def load_pretrained_model(local_rank, model_path: str = ""):
     # TODO: Create LoRA model
 
     model = LoraModelForCasualLM(model, lora_config)
-    if distributed_strategy == "ddp":
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank)
+    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank)
 
-    if _is_master_process():
-        if distributed_strategy == "ddp":   
-            model.module.print_trainable_parameters()
-        else:
-            model.print_trainable_parameters()
+    if _is_master_process():  
+        model.module.print_trainable_parameters()
+
 
     return model
 
