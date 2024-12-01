@@ -346,7 +346,7 @@ def load_pretrained_model(local_rank, model_path: str = ""):
     model = LoraModelForCasualLM(model, lora_config)
 
     if _is_master_process():  
-        model.module.print_trainable_parameters()
+        model.print_trainable_parameters()
 
 
     return model
