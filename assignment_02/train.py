@@ -73,8 +73,8 @@ class Trainer:
             self.ctx = nullcontext()
         else:
             # TODO Otherwise, use 'torch.amp.autocast' context with the specified dtype, and initialize GradScaler if mixed_precision_dtype is float16.
-            self.ctx = None ### YOUR CODE HERE ###
-            self.gradscaler = None ### YOUR CODE HERE ###
+            self.ctx = torch.amp.autocast(dtype=mixed_precision_dtype , device_type=f"cuda:{self.gpu_id}")
+            self.gradscaler = torch.cuda.amp.GradScaler() if mixed_precision_dtype == torch.float16 else None
 
 
     def _set_ddp_training(self):
@@ -105,7 +105,7 @@ class Trainer:
 
             ### YOUR CODE HERE ###
 
-            pass
+            self.gradscaler.scale(loss).backward()
         else:
             loss.backward()
 
@@ -150,7 +150,8 @@ class Trainer:
                     ### YOUR CODE HERE ###
                     # TODO: optimizer step
                     # TODO: update scaler factor
-                    pass
+                    self.gradscaler.step(self.optimizer)
+                    self.gradscaler.update()
                 else:
                     self.optimizer.step()
                 self.optimizer.zero_grad()
@@ -185,14 +186,47 @@ class Trainer:
         # Also add drop_last to True.
 
         data_trainloader = None  ### YOUR CODE HERE ###
+        collate_fn = DataCollatorForSeq2Seq(
+            tokenizer=self.tokenizer,
+            padding=True,
+            pad_to_multiple_of=8,
+            return_tensors="pt"
+        )
 
+        if self.is_ddp_training:
+            sampler = DistributedSampler(train_dataset)
+        else:
+            sampler = None
+
+        data_trainloader = DataLoader(
+            train_dataset,
+            batch_size=self.batch_size,
+            sampler=sampler,
+            collate_fn=collate_fn,
+            drop_last=True
+        )
         # TODO: Prepare the evaluation DataLoader. Initialize 'DataLoader' with 'eval_dataset',
         # the appropriate 'batch_size', and 'SequentialSampler' for 'sampler'.
         # Use 'DataCollatorForSeq2Seq' for 'collate_fn', passing 'tokenizer', padding settings and pad_to_multiple_of to 8, and return_tensors="pt".
         # Also add drop_last to True.
 
         data_testloader = None ### YOUR CODE HERE ###
+        collate_fn = DataCollatorForSeq2Seq(
+            tokenizer=self.tokenizer,
+            padding=True,
+            pad_to_multiple_of=8,
+            return_tensors="pt"
+        )
 
+        sampler = SequentialSampler(eval_dataset)
+
+        data_testloader = DataLoader(
+            eval_dataset,
+            batch_size=self.batch_size,
+            sampler=sampler,
+            collate_fn=collate_fn,
+            drop_last=True
+        )
         return data_trainloader, data_testloader
 
     def _eval(self, eval_dataloader, epoch: int):
@@ -297,20 +331,27 @@ def load_pretrained_model(local_rank, model_path: str = ""):
     # Make sure to set 'device_map' to '{"": torch.device(f"cuda:{local_rank}")}' for DDP training
     # and trust_remote_code=True.
 
-    model = None ### YOUR CODE HERE ###
-
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path, 
+        device_map={"": torch.device(f"cuda:{local_rank}")}, 
+        trust_remote_code=True
+    )
     # TODO: Create a LoraConfig with the parameters: 
     # r=4, lora_alpha=8, lora_dropout=0.05, bias="none", task_type="CAUSAL_LM"
     # We will then use the config to initialize a LoraModelForCasualLM with the loaded model.
 
-    lora_config = None ### YOUR CODE HERE ###
-
+    lora_config = LoraConfig(r=4, lora_alpha=8, lora_dropout=0.05, bias="none", task_type="CAUSAL_LM")
     # TODO: Create LoRA model
 
-    model = None  ### YOUR CODE HERE ###
+    model = LoraModelForCasualLM(model, lora_config)
+    if distributed_strategy == "ddp":
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_rank], output_device=local_rank)
 
     if _is_master_process():
-        model.print_trainable_parameters()
+        if distributed_strategy == "ddp":   
+            model.module.print_trainable_parameters()
+        else:
+            model.print_trainable_parameters()
 
     return model
 
@@ -351,8 +392,9 @@ if __name__ == "__main__":
 
         # Initialize the process group
         ### YOUR CODE HERE ###
+        init_process_group(backend="nccl")
 
-        local_rank = None ### YOUR CODE HERE ###
+        local_rank = int(os.environ['LOCAL_RANK'])
     else:
         os.environ['RANK'] = '0'
         local_rank = 0
