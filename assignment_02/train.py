@@ -81,7 +81,7 @@ class Trainer:
         # TODO: Initialize the DistributedDataParallel wrapper for the model.
         # You would need to pass the model and specify the device IDs
         # and output device for the data parallelism.
-        self.model = None ### YOUR CODE HERE ###        
+        self.model = torch.nn.parallel.DistributedDataParallel(self.model, device_ids=[self.gpu_id], output_device=self.gpu_id)      
 
 
     def _run_batch(self, batch):
