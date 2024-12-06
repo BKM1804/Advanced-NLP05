@@ -259,14 +259,15 @@ class Linear(nn.Linear, LoraLayer):
             # TODO: Merge the LoRA parameters by adding the product of lora_B weights and lora_A weights (after transposing 
             # if necessary) to the original weights, scaled by the LoRA scaling factor. After this operation, set the merged
             # flag to True.
-            self.weight.data += (
-                transpose(
-                    self.lora_B[self.active_adapter].weight @ self.lora_A[self.active_adapter].weight,
-                    self.fan_in_fan_out,
-                )
-                * self.scaling[self.active_adapter]
-            )
-            self.merged = True
+            lora_A_weight = self.lora_A[self.active_adapter].weight
+            lora_B_weight = self.lora_B[self.active_adapter].weight
+            if self.fan_in_fan_out:
+                lora_A_weight = lora_A_weight.T
+                lora_B_weight = lora_B_weight.T
+            lora_output = lora_B_weight @ lora_A_weight
+            scaled_lora_output = lora_output * self.scaling[self.active_adapter]
+            self.weight.data += scaled_lora_output ### YOUR CODE HERE ###
+            self.merged = True ### YOUR CODE HERE ###
 
     def unmerge(self):
         # Separate low-rank approximation from original weights
@@ -301,10 +302,10 @@ class Linear(nn.Linear, LoraLayer):
             # TODO: If the LoRA adapter is active and not merged, add the output of the LoRA layers to the result. This involves
             # passing the input through lora_A, applying dropout, then passing it through lora_B. The output is scaled by the
             # LoRA scaling factor and added to the result.
-            lora_output = self.lora_A[self.active_adapter](x)
-            lora_output = self.lora_dropout[self.active_adapter](lora_output)
-            lora_output = self.lora_B[self.active_adapter](lora_output)
-            result += lora_output * self.scaling[self.active_adapter]
+            lora_A_weight = self.lora_A[self.active_adapter].weight
+            lora_B_weight = self.lora_B[self.active_adapter].weight
+            after_A = F.dropout(F.linear(x, lora_A_weight,bias=None), self.lora_dropout[self.active_adapter].p, training=self.training)
+            result += (after_A @ lora_B_weight.T) * self.scaling[self.active_adapter] ### YOUR CODE HERE ###
         else:
             result = F.linear(x, transpose(self.weight, self.fan_in_fan_out), bias=self.bias)
         
